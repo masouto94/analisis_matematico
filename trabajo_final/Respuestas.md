@@ -48,8 +48,34 @@ A la hora de calcular `_predict_log_conditionals` toma cada observación $x$ con
 
 Debido a la forma cuadrática de QDA, no se puede predecir para $n$ observaciones en una sola pasada (utilizar $X \in \mathbb{R}^{p \times n}$ en vez de $x \in \mathbb{R}^p$) sin pasar por una matriz de $n \times n$ en donde se computan todas las interacciones entre observaciones. Se puede acceder al resultado recuperando sólo la diagonal de dicha matriz, pero resulta ineficiente en tiempo y (especialmente) en memoria. Aún así, es *posible* que el modelo funcione más rápido.
 
+> Para esta sección usamos el dataset de cartas dado que, por su magnitud, era el único donde podíamos observar diferencias:
+- $k$ clases: 3
+- $p$ features: 13
+- $n$ observaciones: 14000
+
 3. Implementar el modelo `FasterQDA` (se recomienda heredarlo de `TensorizedQDA`) de manera de eliminar el ciclo for en el método predict.
+
+```py
+class FasterQDA(TensorizedQDA):
+    def predict(self, X):
+            unbiased_X = X[np.newaxis, :, :] - self.tensor_means
+            temp1 = unbiased_X.transpose(0, 2, 1) @ self.tensor_inv_cov
+            
+            full_matrix = temp1 @ unbiased_X
+            
+            # np.diagonal extrae la diagonal con axis1 y axis2
+            quadratic = np.diagonal(full_matrix, axis1=1, axis2=2)
+            
+            log_det = 0.5 * np.log(LA.det(self.tensor_inv_cov))[:, np.newaxis]
+            log_post = self.log_a_priori[:, np.newaxis] + log_det - 0.5 * quadratic
+            
+            return np.argmax(log_post, axis=0).reshape(1, -1)
+```
+
 4. Mostrar dónde aparece la mencionada matriz de $n \times n$, donde $n$ es la cantidad de observaciones a predecir.
+
+La matriz de $n\times n$ es `full_matrix = temp1 @ unbiased_X`
+
 5. Demostrar que
 $$
 diag(A \cdot B) = \sum_{cols} A \odot B^T = np.sum(A \odot B^T, axis=1)
@@ -59,9 +85,45 @@ np.sum(A^T \odot B, axis=0).T
 $$
 queda a preferencia del alumno cuál usar.
 
+---
+Tomemos matrices pequeñas, por ejemplo 2x2:
+
+$$A = \begin{pmatrix} 1 & 2 \\ 3 & 4 \end{pmatrix} \quad B = \begin{pmatrix} 5 & 6 \\ 7 & 8 \end{pmatrix}$$
+
+*Lado izquierdo:* $diag(A \cdot B)$
+
+$$A \cdot B = \begin{pmatrix} 1\cdot5+2\cdot7 & \cdots \\ \cdots & 3\cdot6+4\cdot8 \end{pmatrix} = \begin{pmatrix} 19 & \cdots \\ \cdots & 50 \end{pmatrix}$$
+
+$$diag(A \cdot B) = \begin{pmatrix} 19 \\ 50 \end{pmatrix}$$
+
+*Lado derecho:* $\sum_{cols} A \odot B^T$
+
+$$B^T = \begin{pmatrix} 5 & 7 \\ 6 & 8 \end{pmatrix}$$
+
+$$A \odot B^T = \begin{pmatrix} 1\cdot5 & 2\cdot7 \\ 3\cdot6 & 4\cdot8 \end{pmatrix} = \begin{pmatrix} 5 & 14 \\ 18 & 32 \end{pmatrix}$$
+
+$$\sum_{cols} = \begin{pmatrix} 5+14 \\ 18+32 \end{pmatrix} = \begin{pmatrix} 19 \\ 50 \end{pmatrix} \checkmark$$
+---
+
 6. Utilizar la propiedad antes demostrada para reimplementar la predicción del modelo `FasterQDA` de forma eficiente en un nuevo modelo `EfficientQDA`.
 
+```py
+class EfficientQDA(TensorizedQDA):
+    def predict(self, X):
+        unbiased_X = X - self.tensor_means 
+        temp = self.tensor_inv_cov @ unbiased_X 
+        quadratic_terms = (unbiased_X * temp).sum(axis=1) 
+        
+        log_det = 0.5 * np.log(LA.det(self.tensor_inv_cov))[:, np.newaxis]
+        log_post = self.log_a_priori[:, np.newaxis] + log_det - 0.5 * quadratic_terms
+        
+        return np.argmax(log_post, axis=0).reshape(1, -1)
+```
 7. Comparar la performance de las 4 variantes de QDA implementadas hasta ahora (no Cholesky) ¿Qué se observa? A modo de opinión ¿Se condice con lo esperado?
+
+![results](results_benchmark.png)
+
+La mejora del `TensorizedQDA` respecto a `QDA` es clara. Sin embargo, resulta que el `FasterQDA` es en efecto mucho más pesado en memoria pero también lo es en tiempo. El `EfficientQDA` es mucho más eficiente en ambos casos. Se condice con lo esperado porque FasterQDA a pesar de  eliminar el ciclo for se sigue construyendo la matriz n×n, generando un cuello de botella en memoria que impacta negativamente en el tiempo de ejecución.
 
 ## Cholesky
 
